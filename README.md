@@ -69,6 +69,7 @@ driving an agent, is weakest.
 | **Requirements drift** | nothing compares code to spec | the Spec axis reads `specs/<branch>/spec.md` and reports what is missing or unrequested |
 | **Findings** | you read a report and fix by hand | fixed automatically, re-tested, up to N rounds |
 | **Tests** | optional in the task template, easy to skip | run as a gate before anything is committed |
+| **Empty suite** | passes silently | refused: no test files, or an npm placeholder script, is a stop |
 | **Git** | untouched: no branch, no commit | one branch per feature, commits in a fixed order |
 | **Empty diff** | reviewed as "clean" | refused with an explicit error |
 | **Destructive migrations** | invisible | the gate stops and asks a human |
@@ -202,6 +203,12 @@ happens outside this package, the way your project already does it.
 `/finish-feature` takes one optional argument: the maximum number of
 fix-and-retry rounds, default `3`. For example, `/finish-feature 5`.
 
+That budget is **shared**. A round is one attempt at tests → commit → review,
+and a round spent getting the suite green is a round the review does not get.
+A red suite is subject to the same limit as a stubborn finding: when the last
+round ends without both axes clean, the command stops and says what is still
+failing, instead of fixing in an unbounded loop.
+
 Two details surprise everyone, and neither is caused by this package:
 
 - **Tests are optional in Spec Kit's task template.** If you do not ask for
@@ -322,14 +329,15 @@ the design: an explicit stop beats a silent pass.
 ## What `/finish-feature` does
 
 ```
-0  refuse to run on main — the branch is missing
-1  stop if a migration drops a column, table, type or unique index
-2  run the test suite
+0  refuse to run outside a repository, on main, or on a non-NNN-name branch
+1  stop if a migration drops a column, table, type or unique index — no override
+2  run the test suite; an empty or placeholder suite is a stop, not a pass
 3  commit — the only commit point, and it happens before the review
+   (the index is read with `git add -A --dry-run` before anything is staged)
 4  run /review-feature — the two-axis review
 5  clean on both axes → go to 8
 6  otherwise fix the findings (no commit here)
-7  back to 2, up to N rounds, then stop and report
+7  back to 2, up to N rounds — shared with the rounds spent on tests
 8  stop: no merge, no push, no pull request, no switching branches
 9  report the branch, the rounds, the findings, any new env vars
 ```
@@ -365,6 +373,15 @@ Yes. It is re-entrant and will not redo work:
 
 Re-running it after fixing something by hand is a normal way to work.
 
+**A migration of mine legitimately drops a column. Now what?**
+The step-1 stop has no override, and asking again does not unlock it — an
+automated gate cannot restore data it has already deleted. Two ways forward,
+both yours to choose between: make the migration non-destructive and re-run the
+command (expand/contract — add, migrate the data, ship, then drop the old
+object in a later migration once nothing reads it), or keep the drop and take
+that one feature through commit and review by hand, having decided about
+backups and retention yourself.
+
 **Does it conflict with Spec Kit?**
 No. Spec Kit writes to `specs/` and `.specify/feature.json` (excluded by its
 own `.gitignore`). The review skill is read-only. Only these commands touch
@@ -374,7 +391,7 @@ owner creates the branch.
 
 **Which test command does it run?**
 It detects the stack — `dotnet test`, `npm test`, `pytest`, `go test ./...`,
-`cargo test`, `mvn test`, `bundle exec rspec` — and runs each one it finds in a
+`cargo test`, `mvn -q test`, `bundle exec rspec` — and runs each one it finds in a
 mixed repository. To pin the command, edit step 2 of
 `.claude/commands/finish-feature.md`; after installation that file is yours.
 
